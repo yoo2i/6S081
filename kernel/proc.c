@@ -295,6 +295,9 @@ fork(void)
 
   np->state = RUNNABLE;
 
+  // 复制跟踪掩码
+  np->trace_mark = p->trace_mark;
+
   release(&np->lock);
 
   return pid;
