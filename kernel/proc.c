@@ -696,3 +696,16 @@ procdump(void)
     printf("\n");
   }
 }
+
+int getNotUnusedProcs() {
+    int count = 0;
+
+    acquire(&pid_lock);
+    for (int i = 0; i < NPROC; i++) {
+      if (proc[i].state != UNUSED)
+          count++;
+    }
+    release(&pid_lock);
+
+    return count;
+}
