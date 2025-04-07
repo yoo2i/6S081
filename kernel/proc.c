@@ -113,6 +113,17 @@ found:
     return 0;
   }
 
+  // 为每个进程分配内核页表
+  p->kpagetable = kpagetableinit();
+
+  // 为每个进程的内核页表创建并映射内核栈
+  char *pa = kalloc();
+  if(pa == 0)
+    panic("kalloc");
+  uint64 va = KSTACK(0);
+  uvmmap(p->kpagetable ,va, (uint64)pa, PGSIZE, PTE_R | PTE_W);
+  p->kstack = va;
+
   // An empty user page table.
   p->pagetable = proc_pagetable(p);
   if(p->pagetable == 0){
@@ -130,6 +141,19 @@ found:
   return p;
 }
 
+void ukpagetableunmap(pagetable_t pagetable) {
+	for (int i = 0; i < 512; i++) {
+		pte_t pte = pagetable[i];
+		if (pte & PTE_V) {
+			if ((pte & (PTE_R|PTE_W|PTE_X)) == 0) { // pte_v有效且rwx均为零代表为2级或1级页表
+				uint64 child = PTE2PA(pte);
+				ukpagetableunmap((pagetable_t)child);
+			} 
+		}
+	}
+
+	kfree((void *)pagetable);
+}
 // free a proc structure and the data hanging from it,
 // including user pages.
 // p->lock must be held.
@@ -142,6 +166,23 @@ freeproc(struct proc *p)
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
   p->pagetable = 0;
+  
+  // 释放内核页表
+  if (p->kpagetable) {
+		// 取消内核页表中内核栈映射(最低层）并且释放
+		uvmunmap(p->kpagetable, p->kstack, 1, 1);
+		p->kstack = 0;
+		
+		// 取消内核页表其余所有映射（最低层）
+		ukpagetableunmap(p->kpagetable);
+
+		// 释放内核页表内存
+		// freewalk(p->kpagetable);
+
+
+  }
+  p->kpagetable = 0;
+  
   p->sz = 0;
   p->pid = 0;
   p->parent = 0;
@@ -194,6 +235,8 @@ proc_freepagetable(pagetable_t pagetable, uint64 sz)
   uvmunmap(pagetable, TRAPFRAME, 1, 0);
   uvmfree(pagetable, sz);
 }
+
+
 
 // a user program that calls exec("/init")
 // od -t xC initcode
@@ -473,11 +516,18 @@ scheduler(void)
         // before jumping back to us.
         p->state = RUNNING;
         c->proc = p;
+
+		// 切换内核页表
+		uvminithart(p->kpagetable);
+
         swtch(&c->context, &p->context);
 
         // Process is done running for now.
         // It should have changed its p->state before coming back.
         c->proc = 0;
+
+		// 切换回全局内核页表
+		kvminithart();
 
         found = 1;
       }
