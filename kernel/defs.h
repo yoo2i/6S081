@@ -182,7 +182,11 @@ void            vmprint(pagetable_t);
 pagetable_t     kpagetableinit(void);
 void            uvmmap(pagetable_t pagetable, uint64 va, uint64 pa, uint64 sz, int perm);
 void            uvminithart(pagetable_t pagetable);
-void            freewalk(pagetable_t pagetable);
+void            u2kpgtblcopy(pagetable_t upgtbl, pagetable_t kpgtbl, uint64 start, uint64 end);
+
+// vmcopyin.c
+int copyin_new(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len);
+int copyinstr_new(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max);
 
 // plic.c
 void            plicinit(void);

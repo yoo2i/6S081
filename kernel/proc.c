@@ -141,13 +141,13 @@ found:
   return p;
 }
 
-void ukpagetableunmap(pagetable_t pagetable) {
+void ukpgtblclear(pagetable_t pagetable) {
 	for (int i = 0; i < 512; i++) {
 		pte_t pte = pagetable[i];
 		if (pte & PTE_V) {
 			if ((pte & (PTE_R|PTE_W|PTE_X)) == 0) { // pte_v有效且rwx均为零代表为2级或1级页表
 				uint64 child = PTE2PA(pte);
-				ukpagetableunmap((pagetable_t)child);
+				ukpgtblclear((pagetable_t)child);
 			} 
 		}
 	}
@@ -173,13 +173,8 @@ freeproc(struct proc *p)
 		uvmunmap(p->kpagetable, p->kstack, 1, 1);
 		p->kstack = 0;
 		
-		// 取消内核页表其余所有映射（最低层）
-		ukpagetableunmap(p->kpagetable);
-
-		// 释放内核页表内存
-		// freewalk(p->kpagetable);
-
-
+		// 释放内核页表
+		ukpgtblclear(p->kpagetable);
   }
   p->kpagetable = 0;
   
@@ -264,6 +259,8 @@ userinit(void)
   uvminit(p->pagetable, initcode, sizeof(initcode));
   p->sz = PGSIZE;
 
+  u2kpgtblcopy(p->pagetable, p->kpagetable, 0, p->sz);
+
   // prepare for the very first "return" from kernel to user.
   p->trapframe->epc = 0;      // user program counter
   p->trapframe->sp = PGSIZE;  // user stack pointer
@@ -286,9 +283,14 @@ growproc(int n)
 
   sz = p->sz;
   if(n > 0){
+    if (PGROUNDUP(sz + n) >= UMAXVA) {
+      printf("not enough memory\n");
+      return -1;
+    }
     if((sz = uvmalloc(p->pagetable, sz, sz + n)) == 0) {
       return -1;
     }
+    u2kpgtblcopy(p->pagetable, p->kpagetable, p->sz, sz);
   } else if(n < 0){
     sz = uvmdealloc(p->pagetable, sz, sz + n);
   }
@@ -331,6 +333,9 @@ fork(void)
     if(p->ofile[i])
       np->ofile[i] = filedup(p->ofile[i]);
   np->cwd = idup(p->cwd);
+
+  // 子进程将用户页表拷贝到内核页表
+  u2kpgtblcopy(np->pagetable, np->kpagetable, 0, np->sz);
 
   safestrcpy(np->name, p->name, sizeof(p->name));
 
@@ -517,8 +522,8 @@ scheduler(void)
         p->state = RUNNING;
         c->proc = p;
 
-		// 切换内核页表
-		uvminithart(p->kpagetable);
+		    // 切换内核页表
+		    uvminithart(p->kpagetable);
 
         swtch(&c->context, &p->context);
 
@@ -526,8 +531,8 @@ scheduler(void)
         // It should have changed its p->state before coming back.
         c->proc = 0;
 
-		// 切换回全局内核页表
-		kvminithart();
+		    // 切换回全局内核页表
+		    kvminithart();
 
         found = 1;
       }
